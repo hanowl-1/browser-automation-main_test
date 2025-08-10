@@ -18,6 +18,8 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from typing import Any, List, Optional
 import ast
+from datetime import datetime
+from chatbot_handler import SuperMembersChatbot
 
 # 환경 변수 로드
 load_dotenv()
@@ -672,7 +674,7 @@ async def on_step_start_extract_spa_ids(agent) -> None:
         if "accounts.kakao.com" in url:
             return
         # 목록 페이지이되 상세가 아닌 경우에만 시도
-        if "/_Jgyxid/chats" in url and "/chats/" not in url:
+        if "/_gwELG/chats" in url and "/chats/" not in url:
             # 로드 상태 안정화 대기 (최대 5초)
             try:
                 await page.wait_for_load_state("domcontentloaded", timeout=5000)
@@ -740,7 +742,7 @@ async def on_step_start_load_full_history(agent) -> None:
         except Exception:
             return
         # 상세 채팅 URL에서만 동작
-        if not re.search(r"/_Jgyxid/chats/\d+", current_url):
+        if not re.search(r"/_gwELG/chats/\d+", current_url):
             return
 
         async def eval_scroll_once() -> dict:
@@ -902,32 +904,36 @@ async def open_tiktok_shop():
     """
     print("🚀 카카오채널 관리자 페이지 접속 및 대화 수집 시작...")
     
+    # 챗봇 초기화
+    chatbot = SuperMembersChatbot(faq_file_path="qna.json")
+    print("🤖 슈퍼멤버스 FAQ 챗봇 로드 완료")
+    
     # LLM 초기화 (Browser Use의 ChatOpenAI 사용)
     llm = ChatOpenAI(model="gpt-4.1")
 
     # 에이전트 작업 정의
     task = """
-카카오채널 관리자 페이지에서 '새 메시지 없는' 채팅방들만 대상으로 대화 기록을 수집해 엄격한 JSON으로 반환하라. JSON 외 텍스트/코드펜스/설명 금지.
+카카오채널 관리자 페이지에서 '새 메시지 있는' 채팅방들만 대상으로 대화 기록을 수집하고, 자동 답변을 전송한 후 결과를 엄격한 JSON으로 반환하라. JSON 외 텍스트/코드펜스/설명 금지.
 
 0) 금지 사항
 - write_file 등 파일 생성/수정 액션 금지. todo.md 같은 파일 작성 금지.
 - 로그인/대기 구간에서는 done 호출 금지. 결과(JSON)를 반환할 때만 done을 호출한다.
 
 1) 접속/로그인/대기(수동 인증 지원)
-- https://center-pf.kakao.com/_Jgyxid/chats 로 이동해 완전 로드 대기.
+- https://center-pf.kakao.com/_gwELG/chats 로 이동해 완전 로드 대기.
 - 로그인 필요 시 ID 'vof@nate.com' / PW 'phozphoz1!' 입력.
 - reCAPTCHA 등 추가 인증이 나타나면 사용자가 수동으로 인증을 완료할 때까지 기다린다.
-- 현재 URL이 https://center-pf.kakao.com/_Jgyxid/chats (목록)로 바뀔 때까지 3초 간격으로 최대 300회(약 15분) 확인한다.
+- 현재 URL이 https://center-pf.kakao.com/_gwELG/chats (목록)로 바뀔 때까지 3초 간격으로 최대 300회(약 15분) 확인한다.
 - 이 단계에서 어떤 경우에도 done을 호출하지 말고, 대기/재시도를 수행한다.
 
-2) '새 메시지 없는' 채팅방 선별 (비전+DOM)
-- 각 row의 유저명 오른쪽 ‘빨간 배경 + 숫자’ 배지를 비전으로 판별. 배지가 있으면 ‘읽지 않음’으로 간주하고 스킵.
+2) '새 메시지 있는' 채팅방 선별 (비전+DOM)
+- 각 row의 유저명 오른쪽 '빨간 배경 + 숫자' 배지를 비전으로 판별. 배지가 있으면 '읽지 않음'으로 간주하고 선택.
 - 배지 후보: 붉은(#c00~#f44 계열) 배경 사각/원 + 대비되는 숫자 텍스트. class(badge|count|unread), aria/data-*도 보조 단서로 사용.
-- 선별된 row만 대상으로 진행. 너무 많으면 상위 3개만 처리(성능 최적화).
+- 배지가 있는 row만 대상으로 진행. 너무 많으면 상위 3개만 처리(성능 최적화).
 
 3) 채팅방 진입 (팝업 회피 및 탭 전환)
 - 우선 DOM에서 row의 outerHTML/속성/인접 스크립트에서 '/chats/<숫자>' 패턴을 탐색해 chatId를 찾을 것.
-- 찾으면 go_to_url('https://center-pf.kakao.com/_Jgyxid/chats/<chatId>').
+- 찾으면 go_to_url('https://center-pf.kakao.com/_gwELG/chats/<chatId>').
 - 못 찾으면 row를 클릭하되, 클릭 직후 반드시 모든 열린 탭/창의 URL을 조사해 '/chats/\\d+'에 매칭되는 탭으로 즉시 전환. 팝업으로 열렸다면 해당 팝업 탭으로 포커스 이동.
 - 전환 후 현재 탭 URL에서 chatId를 추출. 처리 완료 후 상세 탭은 닫고 목록 탭으로 복귀.
 
@@ -938,7 +944,24 @@ async def open_tiktok_shop():
 - Q/A 페어링을 하지 말고, 시간순(오름차순)으로 화자와 발화 텍스트를 그대로 나열한다.
 - 화자는 말풍선 정렬/닉네임/role label로 판별하여 'customer' 또는 'agent'로 기록하되, 불명확하면 화면 표시명을 그대로 사용.
 - 각 발화에 가능한 경우 timestamp를 포함. 사이트 표기(예: 오후03:47)는 ISO8601(예: 2025-07-24T15:47:00)로 정규화 시도하되, 불가하면 원문 그대로 둔다.
-- 출력 스키마:
+
+6) 자동 답변 전송
+- 마지막 고객 메시지를 추출하여 파이썬 코드로 슈퍼멤버스 챗봇을 호출한다.
+- 챗봇 응답 생성 과정:
+  a) 대화에서 마지막 customer 메시지를 찾는다
+  b) 파이썬 코드 실행: 
+     from chatbot_handler import SuperMembersChatbot
+     chatbot = SuperMembersChatbot('qna.json')
+     response = chatbot.generate_response(last_customer_message, room_id)
+  c) 생성된 응답을 메시지 입력창에 입력
+  d) [null] 응답인 경우 기본 템플릿 사용:
+     - 문의/질문 키워드 포함: "안녕하세요! 문의 주신 내용 확인했습니다. 잠시만 기다려 주시면 자세히 안내해 드리겠습니다."
+     - 불만/문제 키워드 포함: "불편을 드려 죄송합니다. 빠르게 확인하여 도움드리겠습니다."
+     - 기타: "안녕하세요! 무엇을 도와드릴까요?"
+- 메시지 입력창에 답변을 입력하고 전송 버튼을 클릭한다.
+- 전송 완료 후 해당 채팅방을 나가고 다음 채팅방으로 이동한다.
+
+7) 출력 스키마:
 [
   {
     "roomId": "<숫자>",
@@ -947,16 +970,21 @@ async def open_tiktok_shop():
     "conversations": [
       {"speaker": "customer", "text": "첫 발화", "timestamp": "2025-07-24T15:47:00"},
       {"speaker": "agent",    "text": "답변",   "timestamp": "2025-07-24T15:49:00"}
-    ]
+    ],
+    "autoReply": {
+      "sent": true,
+      "message": "전송한 자동 답변 내용",
+      "timestamp": "2025-07-24T15:50:00"
+    }
   }
 ]
 
-6) 제약
-- 반드시 '배지 없는' 채팅방만 포함.
+8) 제약
+- 반드시 '배지 있는' 채팅방만 포함.
 - 최종 결과는 JSON 배열만 반환. 그 외 텍스트/로그/설명/코드펜스 금지.
 - 빈 경우 [].
 
-7) 최적화/안정화
+9) 최적화/안정화
 - 새 탭/팝업이 뜨면 즉시 '/chats/\\d+' URL 탭으로 전환 후 작업. 작업 후 닫고 목록으로 복귀.
 - 시야(비전) 수준은 높게 유지하고, 불확실하면 확대 스냅샷으로 배지 유무 재확인.
     """
